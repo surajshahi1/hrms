@@ -324,28 +324,6 @@
             to { transform: rotate(360deg); }
         }
 
-        /* Toast */
-        .toast-message {
-            position: fixed;
-            bottom: 28px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: #1e2a3a;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 40px;
-            font-size: 13px;
-            font-weight: 500;
-            z-index: 1000;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-            transition: opacity 0.2s;
-            pointer-events: none;
-            text-align: center;
-            white-space: nowrap;
-            max-width: 90vw;
-            white-space: normal;
-        }
-
         @media (max-width: 700px) {
             .form-grid {
                 grid-template-columns: 1fr;
@@ -487,6 +465,13 @@
                     </div>
                     <div id="matchHint" class="match-hint"></div>
                 </div>
+                <!-- Terms and conditions -->
+                <div class="input-field full-width terms-box">
+                    <label class="checkbox">
+                        <input type="checkbox" id="termsCheck" required>
+                        <span>I accept the <a href="#" style="color:#2c5f4e;">Terms of Service</a> and <a href="#" style="color:#2c5f4e;">Privacy Policy</a></span>
+                    </label>
+                </div>
             </div>
             <button type="submit" class="btn-submit"><i class="fas fa-user-plus"></i> Register</button>
             <div class="switch-text">
@@ -496,23 +481,8 @@
     </div>
 </div>
 
+<script src="helper/toast.js"></script>
 <script>
-    // ========== SIMPLE TOAST ==========
-    function showToast(msg, type = 'info') {
-        let old = document.querySelector('.toast-message');
-        if(old) old.remove();
-        const toast = document.createElement('div');
-        toast.className = 'toast-message';
-        toast.innerText = msg;
-        if(type === 'error') toast.style.background = '#b91c1c';
-        if(type === 'success') toast.style.background = '#1e3a32';
-        document.body.appendChild(toast);
-        setTimeout(() => {
-            toast.style.opacity = '0';
-            setTimeout(() => toast.remove(), 250);
-        }, 2700);
-    }
-
     // ========== TOGGLE FORMS ==========
     const loginCard = document.getElementById('loginCard');
     const signupCard = document.getElementById('signupCard');
@@ -609,13 +579,14 @@
     const confirmField = document.getElementById('confirmPassword');
     if(confirmField) confirmField.addEventListener('input', checkMatch);
 
-    // ========== LOGIN HANDLER ==========
+    // ========== LOGIN HANDLER - Updated to redirect to dashboard.php ==========
     const loginFormElem = document.getElementById('loginForm');
     loginFormElem.addEventListener('submit', (e) => {
         e.preventDefault();
         const email = document.getElementById('loginEmail').value.trim();
         const password = document.getElementById('loginPassword').value;
         const remember = document.getElementById('rememberMe').checked;
+        
         if(!email || !password) {
             showToast('Please enter email and password', 'error');
             return;
@@ -624,22 +595,42 @@
             showToast('Valid email required', 'error');
             return;
         }
+        
         const btn = loginFormElem.querySelector('.btn-submit');
         btn.classList.add('loading');
+        
+        // Simulate login validation
         setTimeout(() => {
             btn.classList.remove('loading');
+            
+            // Demo credentials check
             if((email === 'hr@army.in' && password === 'admin123') || (password.length >= 4)) {
-                showToast(`Welcome back, ${email.split('@')[0]}!`, 'success');
-                if(remember) localStorage.setItem('hrms_email', email);
-                else localStorage.removeItem('hrms_email');
-                setTimeout(() => alert("✅ Login successful (Demo). Redirecting to dashboard..."), 150);
+                showToast(`Welcome back, ${email.split('@')[0]}! Redirecting to dashboard...`, 'success');
+                
+                // Store user session data
+                if(remember) {
+                    localStorage.setItem('hrms_email', email);
+                    localStorage.setItem('hrms_logged_in', 'true');
+                } else {
+                    localStorage.removeItem('hrms_email');
+                    sessionStorage.setItem('hrms_logged_in', 'true');
+                }
+                
+                // Store user info for dashboard
+                sessionStorage.setItem('user_email', email);
+                sessionStorage.setItem('user_name', email.split('@')[0]);
+                
+                // Redirect to dashboard.php after short delay
+                setTimeout(() => {
+                    window.location.href = 'dashboard.php';
+                }, 1500);
             } else {
                 showToast('Invalid credentials. Try hr@army.in / admin123', 'error');
             }
         }, 700);
     });
 
-    // ========== SIGNUP HANDLER (Updated: removed garrison & regiment fields) ==========
+    // ========== SIGNUP HANDLER ==========
     const signupFormElem = document.getElementById('signupForm');
     signupFormElem.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -676,10 +667,16 @@
 
         const btn = signupFormElem.querySelector('.btn-submit');
         btn.classList.add('loading');
+        
         setTimeout(() => {
             btn.classList.remove('loading');
             showToast(`🎖️ Enlisted: ${fullName}, ${rank} (${branch}) · ID: ${serviceNo}`, 'success');
-            // reset all fields
+            
+            // Auto-fill login form with registered email
+            const loginEmailInput = document.getElementById('loginEmail');
+            if(loginEmailInput) loginEmailInput.value = email;
+            
+            // Reset signup form
             document.getElementById('fullName').value = '';
             document.getElementById('signupEmail').value = '';
             document.getElementById('armyRank').value = '';
@@ -691,17 +688,26 @@
             document.getElementById('termsCheck').checked = false;
             if(pwdField) updateStrengthMeter('');
             document.getElementById('matchHint').innerHTML = '';
+            
+            // Switch to login form
             showLoginForm();
-            const loginEmailInput = document.getElementById('loginEmail');
-            if(loginEmailInput) loginEmailInput.value = email;
+            
+            // Show success message
+            showToast('Registration successful! Please login.', 'success');
         }, 1000);
     });
 
     // Forgot password demo
     document.getElementById('forgotBtn')?.addEventListener('click', (e) => {
         e.preventDefault();
-        showToast('📧 Password reset link sent (demo)', 'success');
+        showToast('📧 Password reset link sent to your email (demo)', 'success');
     });
+
+    // Check if already logged in (session check)
+    if(sessionStorage.getItem('hrms_logged_in') === 'true' || localStorage.getItem('hrms_logged_in') === 'true') {
+        // Redirect to dashboard if already logged in
+        window.location.href = 'dashboard.php';
+    }
 
     // Auto-fill remembered email
     const remembered = localStorage.getItem('hrms_email');
