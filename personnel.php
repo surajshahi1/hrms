@@ -1,7 +1,61 @@
 <?php
+// Start session and include database connection
+session_start();
+require_once 'includes/config.php';
+
 $pageTitle = "Personnel Directory";
 $pageSubtitle = "Complete list of commissioned officers and jawans.";
 $activePage = "personnel";
+
+// Pagination configuration
+$records_per_page = 7;
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$offset = ($page - 1) * $records_per_page;
+
+// Get search term if any
+$search_term = isset($_GET['search']) ? $_GET['search'] : '';
+$search_condition = "";
+$params = [];
+
+if (!empty($search_term)) {
+    $search_condition = "WHERE personnel_number LIKE ? OR full_name_en LIKE ? OR rank LIKE ? OR unit LIKE ?";
+    $search_param = "%$search_term%";
+    $params = [$search_param, $search_param, $search_param, $search_param];
+}
+
+// Get total records for pagination
+try {
+    if (!empty($search_condition)) {
+        $count_stmt = $pdo->prepare("SELECT COUNT(*) FROM personnel $search_condition");
+        $count_stmt->execute($params);
+    } else {
+        $count_stmt = $pdo->query("SELECT COUNT(*) FROM personnel");
+    }
+    $total_records = $count_stmt->fetchColumn();
+    $total_pages = ceil($total_records / $records_per_page);
+    
+    // Adjust page if out of range
+    if ($page < 1) $page = 1;
+    if ($page > $total_pages && $total_pages > 0) $page = $total_pages;
+    
+    // Fetch personnel with pagination
+    $sql = "SELECT * FROM personnel $search_condition ORDER BY created_at DESC LIMIT ? OFFSET ?";
+    $stmt = $pdo->prepare($sql);
+    
+    // Bind parameters
+    foreach ($params as $index => $param) {
+        $stmt->bindValue($index + 1, $param);
+    }
+    $stmt->bindValue(count($params) + 1, $records_per_page, PDO::PARAM_INT);
+    $stmt->bindValue(count($params) + 2, $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    
+    $personnel_list = $stmt->fetchAll();
+} catch(PDOException $e) {
+    $error_message = "Error fetching data: " . $e->getMessage();
+    $personnel_list = [];
+    $total_pages = 0;
+}
 
 // Prepare the content
 ob_start();
@@ -11,8 +65,14 @@ ob_start();
 <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; gap: 15px; flex-wrap: wrap;">
     <div class="search-container">
         <i class="fas fa-search search-icon"></i>
-        <input type="text" id="searchInput" class="search-input" placeholder="Search by name, service no., rank or branch...">
-        <button id="clearSearch" class="clear-search" style="display: none;">✕</button>
+        <form method="GET" action="" id="searchForm" style="flex: 1;">
+            <input type="text" name="search" id="searchInput" class="search-input" 
+                   placeholder="Search by name, service no., rank or branch..." 
+                   value="<?php echo htmlspecialchars($search_term); ?>">
+            <?php if (!empty($search_term)): ?>
+                <button type="button" id="clearSearch" class="clear-search">✕</button>
+            <?php endif; ?>
+        </form>
     </div>
     <button class="btn-add" id="addPersonnelBtn">
         <i class="fas fa-user-plus"></i> Add Personnel
@@ -24,7 +84,7 @@ ob_start();
         <thead>
             <tr>
                 <th style="width: 60px;">S.No.</th>
-                <th>Service No.</th>
+                <th>Personnel No.</th>
                 <th>Name</th>
                 <th>Rank</th>
                 <th>Branch</th>
@@ -33,105 +93,99 @@ ob_start();
             </tr>
         </thead>
         <tbody id="personnelTableBody">
-            <tr>
-                <td>1</td>
-                <td>IC-45231</td>
-                <td>Col. Rajesh Kumar</td>
-                <td>Colonel</td>
-                <td>Infantry</td>
-                <td><span class="badge">Active</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editPersonnel(this)"><i class="fas fa-edit"></i></button>
-                    <button class="btn-icon delete-btn" onclick="deletePersonnel(this)"><i class="fas fa-trash"></i></button>
-                </td>
-            </tr>
-            <tr>
-                <td>2</td>
-                <td>IC-48912</td>
-                <td>Lt. Col. Meera Nair</td>
-                <td>Lieutenant Colonel</td>
-                <td>Signals</td>
-                <td><span class="badge">Active</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editPersonnel(this)"><i class="fas fa-edit"></i></button>
-                    <button class="btn-icon delete-btn" onclick="deletePersonnel(this)"><i class="fas fa-trash"></i></button>
-                </td>
-            </tr>
-            <tr>
-                <td>3</td>
-                <td>JC-22145</td>
-                <td>Subedar Major Harpal</td>
-                <td>Subedar Major</td>
-                <td>Artillery</td>
-                <td><span class="badge">Active</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editPersonnel(this)"><i class="fas fa-edit"></i></button>
-                    <button class="btn-icon delete-btn" onclick="deletePersonnel(this)"><i class="fas fa-trash"></i></button>
-                </td>
-            </tr>
-            <tr>
-                <td>4</td>
-                <td>IC-50234</td>
-                <td>Major Rohan Joshi</td>
-                <td>Major</td>
-                <td>Armoured Corps</td>
-                <td><span class="badge leave">Leave</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editPersonnel(this)"><i class="fas fa-edit"></i></button>
-                    <button class="btn-icon delete-btn" onclick="deletePersonnel(this)"><i class="fas fa-trash"></i></button>
-                </td>
-            </tr>
-            <tr>
-                <td>5</td>
-                <td>JC-18903</td>
-                <td>Havildar Suresh</td>
-                <td>Havildar</td>
-                <td>Infantry</td>
-                <td><span class="badge">Active</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editPersonnel(this)"><i class="fas fa-edit"></i></button>
-                    <button class="btn-icon delete-btn" onclick="deletePersonnel(this)"><i class="fas fa-trash"></i></button>
-                </td>
-            </tr>
-            <tr>
-                <td>6</td>
-                <td>IC-56789</td>
-                <td>Capt. Priya Sharma</td>
-                <td>Captain</td>
-                <td>Medical Corps</td>
-                <td><span class="badge">Active</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editPersonnel(this)"><i class="fas fa-edit"></i></button>
-                    <button class="btn-icon delete-btn" onclick="deletePersonnel(this)"><i class="fas fa-trash"></i></button>
-                </td>
-            </tr>
-            <tr>
-                <td>7</td>
-                <td>JC-33456</td>
-                <td>Naik Amarjeet</td>
-                <td>Naik</td>
-                <td>Engineers</td>
-                <td><span class="badge leave">Leave</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editPersonnel(this)"><i class="fas fa-edit"></i></button>
-                    <button class="btn-icon delete-btn" onclick="deletePersonnel(this)"><i class="fas fa-trash"></i></button>
-                </td>
-            </tr>
-            <tr>
-                <td>8</td>
-                <td>IC-67890</td>
-                <td>Lt. Arjun Reddy</td>
-                <td>Lieutenant</td>
-                <td>Infantry</td>
-                <td><span class="badge">Active</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editPersonnel(this)"><i class="fas fa-edit"></i></button>
-                    <button class="btn-icon delete-btn" onclick="deletePersonnel(this)"><i class="fas fa-trash"></i></button>
-                </td>
-            </tr>
+            <?php if (!empty($personnel_list)): ?>
+                <?php $counter = $offset + 1; ?>
+                <?php foreach ($personnel_list as $personnel): ?>
+                    <tr data-id="<?php echo htmlspecialchars($personnel['personnel_number']); ?>">
+                        <td><?php echo $counter++; ?></td>
+                        <td><?php echo htmlspecialchars($personnel['personnel_number']); ?></td>
+                        <td><?php echo htmlspecialchars($personnel['full_name_en']); ?></td>
+                        <td><?php echo htmlspecialchars($personnel['rank']); ?></td>
+                        <td><?php echo htmlspecialchars($personnel['unit']); ?></td>
+                        <td>
+                            <span class="badge <?php echo strtolower($personnel['current_status']) == 'active' ? '' : 'leave'; ?>">
+                                <?php echo htmlspecialchars($personnel['current_status']); ?>
+                            </span>
+                        </td>
+                        <td>
+                            <button class="btn-icon edit-btn" onclick="editPersonnel('<?php echo htmlspecialchars($personnel['personnel_number']); ?>')">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="btn-icon delete-btn" onclick="deletePersonnel('<?php echo htmlspecialchars($personnel['personnel_number']); ?>', '<?php echo htmlspecialchars($personnel['full_name_en']); ?>')">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            <?php else: ?>
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 40px;">No personnel records found.</td>
+                </tr>
+            <?php endif; ?>
         </tbody>
     </table>
 </div>
+
+<!-- Pagination Section -->
+<?php if ($total_pages > 1): ?>
+<div class="pagination-container">
+    <div class="pagination-info">
+        Showing <?php echo $offset + 1; ?> to <?php echo min($offset + $records_per_page, $total_records); ?> of <?php echo $total_records; ?> entries
+    </div>
+    <div class="pagination">
+        <?php if ($page > 1): ?>
+            <a href="?page=1<?php echo !empty($search_term) ? '&search=' . urlencode($search_term) : ''; ?>" class="pagination-link">
+                <i class="fas fa-angle-double-left"></i>
+            </a>
+            <a href="?page=<?php echo $page - 1; ?><?php echo !empty($search_term) ? '&search=' . urlencode($search_term) : ''; ?>" class="pagination-link">
+                <i class="fas fa-angle-left"></i>
+            </a>
+        <?php endif; ?>
+        
+        <?php
+        // Calculate page range to display
+        $start_page = max(1, $page - 2);
+        $end_page = min($total_pages, $page + 2);
+        
+        if ($start_page > 1) {
+            echo '<span class="pagination-dots">...</span>';
+        }
+        
+        for ($i = $start_page; $i <= $end_page; $i++):
+        ?>
+            <a href="?page=<?php echo $i; ?><?php echo !empty($search_term) ? '&search=' . urlencode($search_term) : ''; ?>" 
+               class="pagination-link <?php echo $i == $page ? 'active' : ''; ?>">
+                <?php echo $i; ?>
+            </a>
+        <?php endfor; ?>
+        
+        <?php if ($end_page < $total_pages): ?>
+            <span class="pagination-dots">...</span>
+        <?php endif; ?>
+        
+        <?php if ($page < $total_pages): ?>
+            <a href="?page=<?php echo $page + 1; ?><?php echo !empty($search_term) ? '&search=' . urlencode($search_term) : ''; ?>" class="pagination-link">
+                <i class="fas fa-angle-right"></i>
+            </a>
+            <a href="?page=<?php echo $total_pages; ?><?php echo !empty($search_term) ? '&search=' . urlencode($search_term) : ''; ?>" class="pagination-link">
+                <i class="fas fa-angle-double-right"></i>
+            </a>
+        <?php endif; ?>
+    </div>
+    
+    <!-- Records per page selector -->
+    <div class="records-per-page">
+        <label>Show:</label>
+        <select id="recordsPerPage">
+            <option value="10" <?php echo $records_per_page == 10 ? 'selected' : ''; ?>>10</option>
+            <option value="25" <?php echo $records_per_page == 25 ? 'selected' : ''; ?>>25</option>
+            <option value="50" <?php echo $records_per_page == 50 ? 'selected' : ''; ?>>50</option>
+            <option value="100" <?php echo $records_per_page == 100 ? 'selected' : ''; ?>>100</option>
+        </select>
+        <span>entries per page</span>
+    </div>
+</div>
+<?php endif; ?>
 
 <!-- No Results Message -->
 <div id="noResults" style="display: none; text-align: center; padding: 40px; color: #6c7a8e;">
@@ -148,18 +202,19 @@ ob_start();
         </div>
         <div class="modal-body">
             <form id="personnelForm">
+                <input type="hidden" id="editId" name="editId">
                 <div class="form-grid">
                     <div class="input-field">
                         <label><i class="fas fa-id-card"></i> Service No. <span class="required-star">*</span></label>
-                        <input type="text" id="serviceNo" placeholder="e.g., IC-12345" required>
+                        <input type="text" id="serviceNo" name="serviceNo" placeholder="e.g., IC-12345" required>
                     </div>
                     <div class="input-field">
                         <label><i class="fas fa-user"></i> Full Name <span class="required-star">*</span></label>
-                        <input type="text" id="fullName" placeholder="e.g., Col. Rajesh Kumar" required>
+                        <input type="text" id="fullName" name="fullName" placeholder="e.g., Col. Rajesh Kumar" required>
                     </div>
                     <div class="input-field">
                         <label><i class="fas fa-star-of-life"></i> Rank <span class="required-star">*</span></label>
-                        <select id="rank" required>
+                        <select id="rank" name="rank" required>
                             <option value="" disabled selected>Select rank</option>
                             <option>General</option>
                             <option>Lieutenant General</option>
@@ -181,7 +236,7 @@ ob_start();
                     </div>
                     <div class="input-field">
                         <label><i class="fas fa-gun"></i> Branch <span class="required-star">*</span></label>
-                        <select id="branch" required>
+                        <select id="branch" name="branch" required>
                             <option value="" disabled selected>Select branch</option>
                             <option>Infantry</option>
                             <option>Armoured Corps</option>
@@ -198,24 +253,35 @@ ob_start();
                     </div>
                     <div class="input-field">
                         <label><i class="fas fa-calendar"></i> Date of Commission <span class="required-star">*</span></label>
-                        <input type="date" id="commissionDate" required>
+                        <input type="date" id="commissionDate" name="commissionDate" required>
                     </div>
                     <div class="input-field">
                         <label><i class="fas fa-flag-checkered"></i> Status <span class="required-star">*</span></label>
-                        <select id="status" required>
+                        <select id="status" name="status" required>
                             <option value="Active">Active</option>
                             <option value="Leave">Leave</option>
                             <option value="Retired">Retired</option>
                             <option value="Training">Training</option>
                         </select>
                     </div>
-                    <div class="input-field full-width">
+                    
+                    <!-- Email and Contact Number in same row -->
+                    <div class="input-field">
                         <label><i class="fas fa-envelope"></i> Email</label>
-                        <input type="email" id="email" placeholder="official@army.in">
+                        <input type="email" id="email" name="email" placeholder="official@army.in">
+                    </div>
+                    <div class="input-field">
+                        <label><i class="fas fa-phone"></i> Contact Number</label>
+                        <input type="tel" id="contact" name="contact" placeholder="+91 XXXXX XXXXX">
+                    </div>
+                    
+                    <div class="input-field full-width">
+                        <label><i class="fas fa-graduation-cap"></i> Higher Education</label>
+                        <textarea id="education" name="education" rows="2" placeholder="e.g., Master's in Defense Studies"></textarea>
                     </div>
                     <div class="input-field full-width">
-                        <label><i class="fas fa-phone"></i> Contact Number</label>
-                        <input type="tel" id="contact" placeholder="+91 XXXXX XXXXX">
+                        <label><i class="fas fa-chalkboard-user"></i> Training</label>
+                        <textarea id="training" name="training" rows="2" placeholder="e.g., Leadership Course, Cyber Security Training"></textarea>
                     </div>
                 </div>
                 <div class="modal-buttons">
@@ -227,12 +293,25 @@ ob_start();
     </div>
 </div>
 
+<!-- Toast Notification -->
+<div id="toast" class="toast" style="display: none;">
+    <div class="toast-content">
+        <i class="fas fa-check-circle" id="toastIcon"></i>
+        <span id="toastMessage"></span>
+    </div>
+</div>
+
 <style>
     /* Search Container Styles */
     .search-container {
         position: relative;
         flex: 1;
         max-width: 400px;
+    }
+    
+    .search-container form {
+        margin: 0;
+        width: 100%;
     }
     
     .search-icon {
@@ -242,6 +321,7 @@ ob_start();
         transform: translateY(-50%);
         color: #9aa9bc;
         font-size: 14px;
+        z-index: 1;
     }
     
     .search-input {
@@ -338,6 +418,10 @@ ob_start();
     }
     
     /* Table Styles */
+    .data-table {
+        overflow-x: auto;
+    }
+    
     .data-table table {
         width: 100%;
         border-collapse: collapse;
@@ -357,6 +441,101 @@ ob_start();
         border-bottom: 1px solid #eef2f6;
     }
     
+    .badge {
+        display: inline-block;
+        padding: 4px 10px;
+        background: #10b981;
+        color: white;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 500;
+    }
+    
+    .badge.leave {
+        background: #f59e0b;
+    }
+    
+    /* Pagination Styles */
+    .pagination-container {
+        margin-top: 24px;
+        padding-top: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 15px;
+        border-top: 1px solid #eef2f6;
+    }
+    
+    .pagination-info {
+        color: #6c7a8e;
+        font-size: 14px;
+    }
+    
+    .pagination {
+        display: flex;
+        gap: 5px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    
+    .pagination-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 36px;
+        height: 36px;
+        padding: 0 10px;
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        color: #1a2c3e;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.2s;
+        cursor: pointer;
+    }
+    
+    .pagination-link:hover {
+        background: #f8fafc;
+        border-color: #2c5f4e;
+        color: #2c5f4e;
+    }
+    
+    .pagination-link.active {
+        background: #1e3a32;
+        border-color: #1e3a32;
+        color: white;
+    }
+    
+    .pagination-dots {
+        padding: 0 5px;
+        color: #9aa9bc;
+    }
+    
+    .records-per-page {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        color: #6c7a8e;
+    }
+    
+    .records-per-page select {
+        padding: 6px 10px;
+        border: 1.5px solid #e2e8f0;
+        border-radius: 6px;
+        background: white;
+        font-size: 14px;
+        cursor: pointer;
+        outline: none;
+    }
+    
+    .records-per-page select:focus {
+        border-color: #2c5f4e;
+    }
+    
     /* Modal Styles */
     .modal {
         display: none;
@@ -374,7 +553,7 @@ ob_start();
         background-color: #fff;
         margin: 5% auto;
         width: 90%;
-        max-width: 700px;
+        max-width: 800px;
         border-radius: 16px;
         box-shadow: 0 10px 40px rgba(0,0,0,0.2);
         animation: slideDown 0.3s;
@@ -446,16 +625,17 @@ ob_start();
         color: #334155;
     }
     
-    .input-field input, .input-field select {
+    .input-field input, .input-field select, .input-field textarea {
         padding: 10px 12px;
         border: 1.5px solid #e2e8f0;
         border-radius: 8px;
         font-size: 14px;
         transition: all 0.2s;
         outline: none;
+        font-family: inherit;
     }
     
-    .input-field input:focus, .input-field select:focus {
+    .input-field input:focus, .input-field select:focus, .input-field textarea:focus {
         border-color: #2c5f4e;
         box-shadow: 0 0 0 3px rgba(44, 95, 78, 0.08);
     }
@@ -508,6 +688,48 @@ ob_start();
         background: #14362c;
     }
     
+    /* Toast Notification */
+    .toast {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 1100;
+        animation: slideInRight 0.3s;
+    }
+    
+    .toast-content {
+        padding: 12px 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .toast-content i {
+        font-size: 20px;
+    }
+    
+    .toast.success .toast-content i {
+        color: #10b981;
+    }
+    
+    .toast.error .toast-content i {
+        color: #c2410c;
+    }
+    
+    @keyframes slideInRight {
+        from {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+    
     /* Highlight matching text */
     .highlight {
         background-color: #fef3c7;
@@ -528,224 +750,239 @@ ob_start();
         .search-container {
             max-width: 100%;
         }
+        .pagination-container {
+            flex-direction: column;
+            align-items: center;
+        }
+        .pagination {
+            justify-content: center;
+        }
     }
 </style>
 
 <script>
-    // Modal elements
-    const modal = document.getElementById('personnelModal');
-    const addBtn = document.getElementById('addPersonnelBtn');
-    const closeBtn = document.querySelector('.close');
-    const cancelBtn = document.getElementById('cancelBtn');
-    const modalTitle = document.getElementById('modalTitle');
-    const form = document.getElementById('personnelForm');
-    const searchInput = document.getElementById('searchInput');
-    const clearSearchBtn = document.getElementById('clearSearch');
-    const tableBody = document.getElementById('personnelTableBody');
-    const noResultsDiv = document.getElementById('noResults');
-    const table = document.getElementById('personnelTable');
+// Modal elements
+const modal = document.getElementById('personnelModal');
+const addBtn = document.getElementById('addPersonnelBtn');
+const closeBtn = document.querySelector('.close');
+const cancelBtn = document.getElementById('cancelBtn');
+const modalTitle = document.getElementById('modalTitle');
+const form = document.getElementById('personnelForm');
+const searchInput = document.getElementById('searchInput');
+const clearSearchBtn = document.getElementById('clearSearch');
+const recordsPerPageSelect = document.getElementById('recordsPerPage');
+
+let isEditing = false;
+
+// Toast function
+function showToast(message, type = 'success') {
+    const toast = document.getElementById('toast');
+    const toastIcon = document.getElementById('toastIcon');
+    const toastMessage = document.getElementById('toastMessage');
     
-    let isEditing = false;
-    let editingRow = null;
+    toast.className = `toast ${type}`;
+    toastIcon.className = type === 'success' ? 'fas fa-check-circle' : 'fas fa-exclamation-circle';
+    toastMessage.textContent = message;
+    toast.style.display = 'block';
     
-    // Function to update serial numbers
-    function updateSerialNumbers() {
-        const rows = tableBody.querySelectorAll('tr');
-        rows.forEach((row, index) => {
-            row.cells[0].textContent = index + 1;
-        });
-    }
-    
-    // Search functionality
-    function searchTable() {
-        const searchTerm = searchInput.value.toLowerCase().trim();
-        const rows = tableBody.querySelectorAll('tr');
-        let hasResults = false;
-        
-        rows.forEach(row => {
-            const serviceNo = row.cells[1].textContent.toLowerCase();
-            const name = row.cells[2].textContent.toLowerCase();
-            const rank = row.cells[3].textContent.toLowerCase();
-            const branch = row.cells[4].textContent.toLowerCase();
-            
-            const matches = searchTerm === '' || 
-                           serviceNo.includes(searchTerm) || 
-                           name.includes(searchTerm) || 
-                           rank.includes(searchTerm) || 
-                           branch.includes(searchTerm);
-            
-            if (matches) {
-                row.style.display = '';
-                hasResults = true;
-                
-                // Highlight matching text if search term exists
-                if (searchTerm !== '') {
-                    highlightText(row.cells[1], searchTerm);
-                    highlightText(row.cells[2], searchTerm);
-                    highlightText(row.cells[3], searchTerm);
-                    highlightText(row.cells[4], searchTerm);
-                } else {
-                    removeHighlight(row.cells[1]);
-                    removeHighlight(row.cells[2]);
-                    removeHighlight(row.cells[3]);
-                    removeHighlight(row.cells[4]);
-                }
-            } else {
-                row.style.display = 'none';
-            }
-        });
-        
-        // Show/hide no results message
-        if (!hasResults && searchTerm !== '') {
-            noResultsDiv.style.display = 'block';
-            table.style.display = 'none';
+    setTimeout(() => {
+        toast.style.display = 'none';
+    }, 3000);
+}
+
+// Handle records per page change
+if (recordsPerPageSelect) {
+    recordsPerPageSelect.addEventListener('change', function() {
+        const url = new URL(window.location.href);
+        url.searchParams.set('per_page', this.value);
+        url.searchParams.set('page', 1);
+        window.location.href = url.toString();
+    });
+}
+
+// Clear search
+if (clearSearchBtn) {
+    clearSearchBtn.addEventListener('click', function() {
+        window.location.href = window.location.pathname;
+    });
+}
+
+// Handle search form submission
+const searchForm = document.getElementById('searchForm');
+if (searchForm) {
+    searchForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const searchValue = searchInput.value.trim();
+        const url = new URL(window.location.href);
+        if (searchValue) {
+            url.searchParams.set('search', searchValue);
         } else {
-            noResultsDiv.style.display = 'none';
-            table.style.display = 'table';
+            url.searchParams.delete('search');
         }
-        
-        // Show/hide clear button
-        clearSearchBtn.style.display = searchTerm !== '' ? 'block' : 'none';
-    }
-    
-    // Highlight text function
-    function highlightText(cell, searchTerm) {
-        const originalText = cell.textContent;
-        const regex = new RegExp(`(${searchTerm})`, 'gi');
-        if (originalText.toLowerCase().includes(searchTerm)) {
-            cell.innerHTML = originalText.replace(regex, '<span class="highlight">$1</span>');
-        }
-    }
-    
-    // Remove highlight function
-    function removeHighlight(cell) {
-        cell.innerHTML = cell.textContent;
-    }
-    
-    // Clear search
-    function clearSearch() {
-        searchInput.value = '';
-        searchTable();
-        searchInput.focus();
-    }
-    
-    // Event listeners for search
-    searchInput.addEventListener('input', searchTable);
-    clearSearchBtn.addEventListener('click', clearSearch);
-    
-    // Open modal for adding
+        url.searchParams.set('page', 1);
+        window.location.href = url.toString();
+    });
+}
+
+// Open modal for adding
+if (addBtn) {
     addBtn.onclick = function() {
         isEditing = false;
-        editingRow = null;
         modalTitle.innerHTML = '<i class="fas fa-user-plus"></i> Add New Personnel';
         form.reset();
+        document.getElementById('editId').value = '';
         modal.style.display = 'block';
     }
-    
-    // Close modal
-    function closeModal() {
-        modal.style.display = 'none';
-        form.reset();
-        isEditing = false;
-        editingRow = null;
-    }
-    
+}
+
+// Close modal
+function closeModal() {
+    modal.style.display = 'none';
+    form.reset();
+    isEditing = false;
+}
+
+if (closeBtn) {
     closeBtn.onclick = closeModal;
+}
+if (cancelBtn) {
     cancelBtn.onclick = closeModal;
-    
-    // Close modal when clicking outside
-    window.onclick = function(event) {
-        if (event.target == modal) {
-            closeModal();
-        }
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    if (event.target == modal) {
+        closeModal();
     }
-    
-    // Edit personnel function
-    function editPersonnel(button) {
-        const row = button.closest('tr');
-        const cells = row.cells;
-        
-        isEditing = true;
-        editingRow = row;
-        modalTitle.innerHTML = '<i class="fas fa-edit"></i> Edit Personnel';
-        
-        // Fill form with existing data
-        document.getElementById('serviceNo').value = cells[1].textContent;
-        document.getElementById('fullName').value = cells[2].textContent;
-        document.getElementById('rank').value = cells[3].textContent;
-        document.getElementById('branch').value = cells[4].textContent;
-        
-        const statusSpan = cells[5].querySelector('span');
-        document.getElementById('status').value = statusSpan.textContent;
-        
-        modal.style.display = 'block';
+}
+
+// Edit personnel function with AJAX
+function editPersonnel(personnelNumber) {
+    // Fetch personnel data via AJAX
+    fetch(`get_personnel.php?id=${personnelNumber}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                isEditing = true;
+                modalTitle.innerHTML = '<i class="fas fa-edit"></i> Edit Personnel';
+                
+                document.getElementById('editId').value = data.data.personnel_number;
+                document.getElementById('serviceNo').value = data.data.personnel_number;
+                document.getElementById('fullName').value = data.data.full_name_en;
+                document.getElementById('rank').value = data.data.rank;
+                document.getElementById('branch').value = data.data.unit;
+                document.getElementById('commissionDate').value = data.data.joint_date;
+                document.getElementById('status').value = data.data.current_status;
+                document.getElementById('email').value = data.data.email || '';
+                document.getElementById('contact').value = data.data.contact || '';
+                document.getElementById('education').value = data.data.higher_education || '';
+                document.getElementById('training').value = data.data.training || '';
+                
+                modal.style.display = 'block';
+            } else {
+                showToast('Error loading personnel data', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Error loading personnel data', 'error');
+        });
+}
+
+// Delete personnel function
+function deletePersonnel(serviceNo, name) {
+    if(confirm(`Are you sure you want to delete ${name} (${serviceNo})?`)) {
+        fetch('delete_personnel.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: `id=${encodeURIComponent(serviceNo)}`
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(`Personnel ${name} deleted successfully`, 'success');
+                // Reload page after 1 second
+                setTimeout(() => {
+                    location.reload();
+                }, 1000);
+            } else {
+                showToast(data.message || 'Error deleting personnel', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Error deleting personnel', 'error');
+        });
     }
-    
-    // Delete personnel function
-    function deletePersonnel(button) {
-        const row = button.closest('tr');
-        const serviceNo = row.cells[1].textContent;
-        const name = row.cells[2].textContent;
-        
-        if(confirm(`Are you sure you want to delete ${name} (${serviceNo})?`)) {
-            row.remove();
-            updateSerialNumbers();
-            showToast(`Personnel ${name} deleted successfully`, 'success');
-            searchTable(); // Refresh search results
-        }
-    }
-    
-    // Handle form submission
+}
+
+// Handle form submission
+if (form) {
     form.onsubmit = function(e) {
         e.preventDefault();
         
         // Get form values
+        const editId = document.getElementById('editId').value;
         const serviceNo = document.getElementById('serviceNo').value;
         const fullName = document.getElementById('fullName').value;
         const rank = document.getElementById('rank').value;
         const branch = document.getElementById('branch').value;
+        const commissionDate = document.getElementById('commissionDate').value;
         const status = document.getElementById('status').value;
+        const email = document.getElementById('email').value;
+        const contact = document.getElementById('contact').value;
+        const education = document.getElementById('education').value;
+        const training = document.getElementById('training').value;
         
         // Validate
-        if(!serviceNo || !fullName || !rank || !branch || !status) {
+        if(!serviceNo || !fullName || !rank || !branch || !commissionDate || !status) {
             showToast('Please fill all required fields', 'error');
             return;
         }
         
-        const statusClass = status === 'Active' ? 'badge' : 'badge leave';
-        const statusHtml = `<span class="${statusClass}">${status}</span>`;
+        // Prepare form data
+        const formData = new URLSearchParams();
+        formData.append('editId', editId);
+        formData.append('serviceNo', serviceNo);
+        formData.append('fullName', fullName);
+        formData.append('rank', rank);
+        formData.append('branch', branch);
+        formData.append('commissionDate', commissionDate);
+        formData.append('status', status);
+        formData.append('email', email);
+        formData.append('contact', contact);
+        formData.append('education', education);
+        formData.append('training', training);
         
-        if(isEditing && editingRow) {
-            // Update existing row
-            editingRow.cells[1].textContent = serviceNo;
-            editingRow.cells[2].textContent = fullName;
-            editingRow.cells[3].textContent = rank;
-            editingRow.cells[4].textContent = branch;
-            editingRow.cells[5].innerHTML = statusHtml;
-            showToast(`Personnel ${fullName} updated successfully`, 'success');
-        } else {
-            // Add new row
-            const newRow = tableBody.insertRow();
-            const newIndex = tableBody.rows.length;
-            newRow.innerHTML = `
-                <td>${newIndex}</td>
-                <td>${serviceNo}</td>
-                <td>${fullName}</td>
-                <td>${rank}</td>
-                <td>${branch}</td>
-                <td>${statusHtml}</td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editPersonnel(this)"><i class="fas fa-edit"></i></button>
-                    <button class="btn-icon delete-btn" onclick="deletePersonnel(this)"><i class="fas fa-trash"></i></button>
-                </td>
-            `;
-            updateSerialNumbers();
-            showToast(`Personnel ${fullName} added successfully`, 'success');
-        }
-        
-        closeModal();
-        searchTable(); // Refresh search if needed
+        // Submit via AJAX
+        fetch('save_personnel.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: formData.toString()
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message, 'success');
+                closeModal();
+                // Reload page after 1 second
+                setTimeout(() => {
+                    location.reload();
+                }, 1000);
+            } else {
+                showToast(data.message || 'Error saving personnel', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Error saving personnel', 'error');
+        });
     }
+}
 </script>
 
 <?php
