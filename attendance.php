@@ -1,7 +1,76 @@
 <?php
-$pageTitle = "Attendance Register";
-$pageSubtitle = "Monthly attendance summary for personnel.";
+include('includes/config.php');
+
+$pageTitle = "Military Personnel Status Register";
+$pageSubtitle = "Track attendance, leave, work status of military personnel with date/time stamps.";
 $activePage = "attendance";
+
+try {
+    $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $username, $password);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+} catch(PDOException $e) {
+    die("Connection failed: " . $e->getMessage());
+}
+
+// Handle AJAX requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['HTTP_X_REQUESTED_WITH'] === 'XMLHttpRequest') {
+    header('Content-Type: application/json');
+    
+    $action = $_POST['action'] ?? '';
+    
+    // Get all personnel
+    if ($action === 'get_all') {
+        $stmt = $pdo->query("SELECT * FROM military_personnel_status ORDER BY record_date DESC, id DESC");
+        $personnel = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        echo json_encode(['success' => true, 'data' => $personnel]);
+        exit;
+    }
+    
+    // Add new personnel
+    if ($action === 'add') {
+        $name = $_POST['name'] ?? '';
+        $rank = $_POST['rank'] ?? '';
+        $status = $_POST['status'] ?? '';
+        $date = $_POST['date'] ?? '';
+        $inTime = $_POST['inTime'] ?: null;
+        $outTime = $_POST['outTime'] ?: null;
+        $remarks = $_POST['remarks'] ?? '';
+        
+        $stmt = $pdo->prepare("INSERT INTO military_personnel_status (personnel_name, rank, status, record_date, in_time, out_time, remarks) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        $result = $stmt->execute([$name, $rank, $status, $date, $inTime, $outTime, $remarks]);
+        
+        echo json_encode(['success' => $result, 'id' => $pdo->lastInsertId()]);
+        exit;
+    }
+    
+    // Update personnel
+    if ($action === 'update') {
+        $id = $_POST['id'] ?? 0;
+        $name = $_POST['name'] ?? '';
+        $rank = $_POST['rank'] ?? '';
+        $status = $_POST['status'] ?? '';
+        $date = $_POST['date'] ?? '';
+        $inTime = $_POST['inTime'] ?: null;
+        $outTime = $_POST['outTime'] ?: null;
+        $remarks = $_POST['remarks'] ?? '';
+        
+        $stmt = $pdo->prepare("UPDATE military_personnel_status SET personnel_name = ?, rank = ?, status = ?, record_date = ?, in_time = ?, out_time = ?, remarks = ? WHERE id = ?");
+        $result = $stmt->execute([$name, $rank, $status, $date, $inTime, $outTime, $remarks, $id]);
+        
+        echo json_encode(['success' => $result]);
+        exit;
+    }
+    
+    // Delete personnel
+    if ($action === 'delete') {
+        $id = $_POST['id'] ?? 0;
+        $stmt = $pdo->prepare("DELETE FROM military_personnel_status WHERE id = ?");
+        $result = $stmt->execute([$id]);
+        
+        echo json_encode(['success' => $result]);
+        exit;
+    }
+}
 
 // Prepare the content
 ob_start();
@@ -11,12 +80,12 @@ ob_start();
 <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; gap: 15px; flex-wrap: wrap;">
     <div class="search-container">
         <i class="fas fa-search search-icon"></i>
-        <input type="text" id="searchInput" class="search-input" placeholder="Search by name or rank...">
+        <input type="text" id="searchInput" class="search-input" placeholder="Search by name, rank, status, or remarks...">
         <button id="clearSearch" class="clear-search" style="display: none;">✕</button>
     </div>
     <div style="display: flex; gap: 10px;">
-        <button class="btn-add" id="markAttendanceBtn">
-            <i class="fas fa-calendar-check"></i> Mark Attendance
+        <button class="btn-add" id="markStatusBtn">
+            <i class="fas fa-plus-circle"></i> Add Personnel
         </button>
         <button class="btn-export" id="exportBtn">
             <i class="fas fa-download"></i> Export
@@ -24,69 +93,35 @@ ob_start();
     </div>
 </div>
 
+<!-- Status Filter Buttons - Military Specific -->
+<div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
+    <button class="filter-btn active" data-filter="all">📋 All</button>
+    <button class="filter-btn" data-filter="present">✅ Present (Duty)</button>
+    <button class="filter-btn" data-filter="leave">🏖️ On Leave</button>
+    <button class="filter-btn" data-filter="sick">🤒 Sick Report</button>
+    <button class="filter-btn" data-filter="work">💼 Work Detail</button>
+    <button class="filter-btn" data-filter="workout">🏃‍♂️ Work-Out / PT</button>
+    <button class="filter-btn" data-filter="tdy">✈️ TDY/Temporary Duty</button>
+    <button class="filter-btn" data-filter="course">📚 Course/Training</button>
+</div>
+
 <div class="data-table">
-    <table id="attendanceTable">
+    <table id="statusTable">
         <thead>
             <tr>
-                <th style="width: 60px;">S.No.</th>
+                <th style="width: 50px;">S.No.</th>
                 <th>Name</th>
                 <th>Rank</th>
-                <th>Present Days</th>
-                <th>Absent</th>
-                <th>Attendance %</th>
-                <th style="width: 100px;">Status</th>
+                <th style="width: 140px;">Status</th>
+                <th>Date</th>
+                <th>IN Time</th>
+                <th>OUT Time</th>
+                <th style="min-width: 200px;">Remarks / Reason</th>
                 <th style="width: 100px;">Actions</th>
             </tr>
         </thead>
-        <tbody id="attendanceTableBody">
-            <tr>
-                <td>1</td>
-                <td>Vikram Rathore</td>
-                <td>Major</td>
-                <td>24</td>
-                <td>1</td>
-                <td>96%</td>
-                <td><span class="badge badge-good">Good</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editAttendance(this)"><i class="fas fa-edit"></i></button>
-                 </td>
-            </tr>
-            <tr>
-                <td>2</td>
-                <td>Anjali Sharma</td>
-                <td>Captain</td>
-                <td>25</td>
-                <td>0</td>
-                <td>100%</td>
-                <td><span class="badge badge-excellent">Excellent</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editAttendance(this)"><i class="fas fa-edit"></i></button>
-                 </td>
-            </tr>
-            <tr>
-                <td>3</td>
-                <td>Baldev Singh</td>
-                <td>Subedar</td>
-                <td>18</td>
-                <td>7</td>
-                <td>72%</td>
-                <td><span class="badge badge-warning">Needs Improvement</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editAttendance(this)"><i class="fas fa-edit"></i></button>
-                 </td>
-            </tr>
-            <tr>
-                <td>4</td>
-                <td>Arjun Mehta</td>
-                <td>Lieutenant</td>
-                <td>23</td>
-                <td>2</td>
-                <td>92%</td>
-                <td><span class="badge badge-good">Good</span></td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editAttendance(this)"><i class="fas fa-edit"></i></button>
-                 </td>
-            </tr>
+        <tbody id="statusTableBody">
+            <!-- Data will be loaded dynamically from database -->
         </tbody>
     </table>
 </div>
@@ -94,105 +129,128 @@ ob_start();
 <!-- No Results Message -->
 <div id="noResults" style="display: none; text-align: center; padding: 40px; color: #6c7a8e;">
     <i class="fas fa-search" style="font-size: 48px; margin-bottom: 10px;"></i>
-    <p>No attendance records found matching your search criteria.</p>
+    <p>No personnel records found matching your search criteria.</p>
 </div>
 
-<!-- Modal for Mark/Edit Attendance -->
-<div id="attendanceModal" class="modal">
+<!-- Modal for Add/Edit Personnel -->
+<div id="statusModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h3 id="modalTitle"><i class="fas fa-calendar-check"></i> Mark Attendance</h3>
+            <h3 id="modalTitle"><i class="fas fa-user-plus"></i> Add Personnel</h3>
             <span class="close">&times;</span>
         </div>
         <div class="modal-body">
-            <form id="attendanceForm">
+            <form id="statusForm">
+                <input type="hidden" id="recordId" value="">
                 <div class="form-grid">
                     <div class="input-field">
                         <label><i class="fas fa-user"></i> Personnel Name <span class="required-star">*</span></label>
-                        <select id="personnelName" required>
-                            <option value="" disabled selected>Select personnel</option>
-                            <option>Vikram Rathore</option>
-                            <option>Anjali Sharma</option>
-                            <option>Baldev Singh</option>
-                            <option>Arjun Mehta</option>
-                        </select>
+                        <input type="text" id="personnelName" placeholder="Enter full name with rank" required>
                     </div>
                     <div class="input-field">
                         <label><i class="fas fa-star-of-life"></i> Rank <span class="required-star">*</span></label>
-                        <input type="text" id="rank" readonly style="background: #f8fafc;">
+                        <input type="text" id="rank" placeholder="e.g., Colonel, Major, Captain" required>
                     </div>
                     <div class="input-field">
-                        <label><i class="fas fa-calendar-week"></i> Month <span class="required-star">*</span></label>
-                        <select id="month" required>
-                            <option value="" disabled selected>Select month</option>
-                            <option>January</option><option>February</option><option>March</option>
-                            <option>April</option><option>May</option><option>June</option>
-                            <option>July</option><option>August</option><option>September</option>
-                            <option>October</option><option>November</option><option>December</option>
+                        <label><i class="fas fa-calendar-alt"></i> Date <span class="required-star">*</span></label>
+                        <input type="date" id="recordDate" required>
+                    </div>
+                    <div class="input-field">
+                        <label><i class="fas fa-tag"></i> Status <span class="required-star">*</span></label>
+                        <select id="status" required onchange="toggleTimeFields()">
+                            <option value="" disabled selected>Select status</option>
+                            <option value="present">✅ Present (Duty)</option>
+                            <option value="leave">🏖️ On Leave</option>
+                            <option value="sick">🤒 Sick Report</option>
+                            <option value="work">💼 Work Detail</option>
+                            <option value="workout">🏃‍♂️ Work-Out / PT</option>
+                            <option value="tdy">✈️ TDY/Temporary Duty</option>
+                            <option value="course">📚 Course/Training</option>
                         </select>
                     </div>
-                    <div class="input-field">
-                        <label><i class="fas fa-calendar"></i> Year <span class="required-star">*</span></label>
-                        <select id="year" required>
-                            <option>2024</option>
-                            <option selected>2025</option>
-                            <option>2026</option>
-                        </select>
+                    <div class="input-field" id="inTimeField" style="display: none;">
+                        <label><i class="fas fa-clock"></i> IN Time</label>
+                        <input type="time" id="inTime">
                     </div>
-                    <div class="input-field">
-                        <label><i class="fas fa-check-circle"></i> Present Days <span class="required-star">*</span></label>
-                        <input type="number" id="presentDays" min="0" max="31" placeholder="e.g., 24" required>
-                    </div>
-                    <div class="input-field">
-                        <label><i class="fas fa-times-circle"></i> Absent Days <span class="required-star">*</span></label>
-                        <input type="number" id="absentDays" min="0" max="31" placeholder="e.g., 1" required>
+                    <div class="input-field" id="outTimeField" style="display: none;">
+                        <label><i class="fas fa-clock"></i> OUT Time</label>
+                        <input type="time" id="outTime">
                     </div>
                     <div class="input-field full-width">
-                        <label><i class="fas fa-chart-line"></i> Attendance Percentage</label>
-                        <input type="text" id="attendancePercent" readonly style="background: #f8fafc; font-weight: 600;">
-                    </div>
-                    <div class="input-field full-width">
-                        <label><i class="fas fa-sticky-note"></i> Remarks (Optional)</label>
-                        <textarea id="remarks" rows="3" placeholder="Any additional notes..."></textarea>
+                        <label><i class="fas fa-sticky-note"></i> Remarks / Reason <span class="required-star">*</span></label>
+                        <textarea id="remarks" rows="3" placeholder="For Present/Work Detail: Specify duties&#10;For Leave/Sick: Specify leave details and duration&#10;For Work-Out: Specify PT/exercise details&#10;For TDY/Course: Specify location and duration" required></textarea>
                     </div>
                 </div>
                 <div class="modal-buttons">
                     <button type="button" class="btn-cancel" id="cancelBtn">Cancel</button>
-                    <button type="submit" class="btn-submit">Save Attendance</button>
+                    <button type="submit" class="btn-submit">Save Record</button>
                 </div>
             </form>
         </div>
     </div>
 </div>
 
+<!-- Toast Notification -->
+<div id="toast" class="toast" style="display: none;">
+    <span id="toastMessage"></span>
+</div>
+
 <!-- Summary Cards -->
-<div class="summary-cards" style="margin-top: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+<div class="summary-cards" style="margin-top: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 15px;">
     <div class="summary-card">
         <div class="summary-icon"><i class="fas fa-users"></i></div>
         <div class="summary-info">
             <div class="summary-label">Total Personnel</div>
-            <div class="summary-value" id="totalPersonnel">4</div>
+            <div class="summary-value" id="totalPersonnel">0</div>
         </div>
     </div>
     <div class="summary-card">
-        <div class="summary-icon"><i class="fas fa-chart-line"></i></div>
+        <div class="summary-icon"><i class="fas fa-check-circle"></i></div>
         <div class="summary-info">
-            <div class="summary-label">Average Attendance</div>
-            <div class="summary-value" id="avgAttendance">90%</div>
+            <div class="summary-label">Present (Duty)</div>
+            <div class="summary-value" id="presentCount">0</div>
         </div>
     </div>
     <div class="summary-card">
-        <div class="summary-icon"><i class="fas fa-trophy"></i></div>
+        <div class="summary-icon"><i class="fas fa-umbrella-beach"></i></div>
         <div class="summary-info">
-            <div class="summary-label">Excellent (>90%)</div>
-            <div class="summary-value" id="excellentCount">2</div>
+            <div class="summary-label">On Leave</div>
+            <div class="summary-value" id="leaveCount">0</div>
         </div>
     </div>
     <div class="summary-card">
-        <div class="summary-icon"><i class="fas fa-exclamation-triangle"></i></div>
+        <div class="summary-icon"><i class="fas fa-thermometer-half"></i></div>
         <div class="summary-info">
-            <div class="summary-label">Needs Improvement (<75%)</div>
-            <div class="summary-value" id="needsImprovementCount">1</div>
+            <div class="summary-label">Sick Report</div>
+            <div class="summary-value" id="sickCount">0</div>
+        </div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-icon"><i class="fas fa-briefcase"></i></div>
+        <div class="summary-info">
+            <div class="summary-label">Work Detail</div>
+            <div class="summary-value" id="workCount">0</div>
+        </div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-icon"><i class="fas fa-running"></i></div>
+        <div class="summary-info">
+            <div class="summary-label">Work-Out/PT</div>
+            <div class="summary-value" id="workoutCount">0</div>
+        </div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-icon"><i class="fas fa-plane"></i></div>
+        <div class="summary-info">
+            <div class="summary-label">TDY</div>
+            <div class="summary-value" id="tdyCount">0</div>
+        </div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-icon"><i class="fas fa-graduation-cap"></i></div>
+        <div class="summary-info">
+            <div class="summary-label">Course/Training</div>
+            <div class="summary-value" id="courseCount">0</div>
         </div>
     </div>
 </div>
@@ -254,6 +312,29 @@ ob_start();
         color: #c2410c;
     }
     
+    /* Filter Buttons */
+    .filter-btn {
+        padding: 8px 16px;
+        border: 1.5px solid #e2e8f0;
+        background: white;
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+    
+    .filter-btn:hover {
+        background: #f1f5f9;
+        border-color: #2c5f4e;
+    }
+    
+    .filter-btn.active {
+        background: #1e3a32;
+        color: white;
+        border-color: #1e3a32;
+    }
+    
     /* Button Styles */
     .btn-add, .btn-export {
         padding: 10px 20px;
@@ -311,27 +392,59 @@ ob_start();
         transform: scale(1.1);
     }
     
-    /* Badge Styles */
-    .badge {
-        padding: 4px 8px;
-        border-radius: 12px;
-        font-size: 12px;
-        font-weight: 600;
+    .delete-btn {
+        color: #dc2626;
     }
     
-    .badge-excellent {
+    .delete-btn:hover {
+        background: #fee2e2;
+        transform: scale(1.1);
+    }
+    
+    /* Badge Styles - Military Specific */
+    .badge {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .badge-present {
         background: #d1fae5;
         color: #065f46;
     }
     
-    .badge-good {
+    .badge-leave {
         background: #dbeafe;
         color: #1e40af;
     }
     
-    .badge-warning {
+    .badge-sick {
+        background: #fef3c7;
+        color: #92400e;
+    }
+    
+    .badge-work {
+        background: #e0e7ff;
+        color: #3730a3;
+    }
+    
+    .badge-workout {
         background: #fed7aa;
         color: #9a3412;
+    }
+    
+    .badge-tdy {
+        background: #e0f2fe;
+        color: #075985;
+    }
+    
+    .badge-course {
+        background: #f3e8ff;
+        color: #6b21a5;
     }
     
     /* Summary Cards */
@@ -363,21 +476,26 @@ ob_start();
     }
     
     .summary-label {
-        font-size: 12px;
+        font-size: 11px;
         color: #6c7a8e;
         margin-bottom: 4px;
     }
     
     .summary-value {
-        font-size: 24px;
+        font-size: 20px;
         font-weight: 700;
         color: #1a2c3e;
     }
     
     /* Table Styles */
+    .data-table {
+        overflow-x: auto;
+    }
+    
     .data-table table {
         width: 100%;
         border-collapse: collapse;
+        min-width: 900px;
     }
     
     .data-table th {
@@ -546,6 +664,32 @@ ob_start();
         background: #14362c;
     }
     
+    /* Toast Notification */
+    .toast {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #1e3a32;
+        color: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-size: 14px;
+        z-index: 1100;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        animation: slideIn 0.3s ease-out;
+    }
+    
+    @keyframes slideIn {
+        from {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+    
     /* Highlight matching text */
     .highlight {
         background-color: #fef3c7;
@@ -567,125 +711,164 @@ ob_start();
             max-width: 100%;
         }
         .summary-cards {
-            grid-template-columns: 1fr;
+            grid-template-columns: repeat(2, 1fr);
+        }
+        .filter-btn {
+            font-size: 11px;
+            padding: 6px 12px;
         }
     }
 </style>
 
 <script>
-    // Personnel data mapping
-    const personnelData = {
-        'Vikram Rathore': { rank: 'Major' },
-        'Anjali Sharma': { rank: 'Captain' },
-        'Baldev Singh': { rank: 'Subedar' },
-        'Arjun Mehta': { rank: 'Lieutenant' }
-    };
+    let personnelData = [];
+    let currentFilter = 'all';
+    
+    // Set today's date as default
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('recordDate').value = today;
     
     // Modal elements
-    const modal = document.getElementById('attendanceModal');
-    const markBtn = document.getElementById('markAttendanceBtn');
+    const modal = document.getElementById('statusModal');
+    const markBtn = document.getElementById('markStatusBtn');
     const closeBtn = document.querySelector('.close');
     const cancelBtn = document.getElementById('cancelBtn');
     const modalTitle = document.getElementById('modalTitle');
-    const form = document.getElementById('attendanceForm');
+    const form = document.getElementById('statusForm');
     const searchInput = document.getElementById('searchInput');
     const clearSearchBtn = document.getElementById('clearSearch');
-    const tableBody = document.getElementById('attendanceTableBody');
+    const tableBody = document.getElementById('statusTableBody');
     const noResultsDiv = document.getElementById('noResults');
-    const table = document.getElementById('attendanceTable');
+    const table = document.getElementById('statusTable');
     
     let isEditing = false;
-    let editingRow = null;
+    let editingId = null;
     
-    // Calculate attendance percentage
-    function calculatePercentage() {
-        const present = parseInt(document.getElementById('presentDays').value) || 0;
-        const absent = parseInt(document.getElementById('absentDays').value) || 0;
-        const total = present + absent;
-        
-        if (total > 0) {
-            const percentage = ((present / total) * 100).toFixed(1);
-            document.getElementById('attendancePercent').value = `${percentage}%`;
-            return percentage;
-        }
-        return 0;
-    }
-    
-    // Get status badge based on percentage
-    function getStatusBadge(percentage) {
-        const percent = parseFloat(percentage);
-        if (percent >= 90) {
-            return '<span class="badge badge-excellent">Excellent</span>';
-        } else if (percent >= 75) {
-            return '<span class="badge badge-good">Good</span>';
-        } else {
-            return '<span class="badge badge-warning">Needs Improvement</span>';
-        }
-    }
-    
-    // Update summary statistics
-    function updateSummary() {
-        const rows = tableBody.querySelectorAll('tr');
-        let totalPercent = 0;
-        let excellentCount = 0;
-        let needsImprovementCount = 0;
-        
-        rows.forEach(row => {
-            const percentCell = row.cells[5].textContent;
-            const percent = parseFloat(percentCell);
-            totalPercent += percent;
+    // Load data from database
+    async function loadDataFromDatabase() {
+        try {
+            const formData = new FormData();
+            formData.append('action', 'get_all');
             
-            if (percent >= 90) excellentCount++;
-            if (percent < 75) needsImprovementCount++;
-        });
-        
-        const avgAttendance = rows.length > 0 ? (totalPercent / rows.length).toFixed(1) : 0;
-        
-        document.getElementById('totalPersonnel').textContent = rows.length;
-        document.getElementById('avgAttendance').textContent = `${avgAttendance}%`;
-        document.getElementById('excellentCount').textContent = excellentCount;
-        document.getElementById('needsImprovementCount').textContent = needsImprovementCount;
-    }
-    
-    // Update serial numbers
-    function updateSerialNumbers() {
-        const rows = tableBody.querySelectorAll('tr');
-        rows.forEach((row, index) => {
-            row.cells[0].textContent = index + 1;
-        });
-    }
-    
-    // Search functionality
-    function searchTable() {
-        const searchTerm = searchInput.value.toLowerCase().trim();
-        const rows = tableBody.querySelectorAll('tr');
-        let hasResults = false;
-        
-        rows.forEach(row => {
-            const name = row.cells[1].textContent.toLowerCase();
-            const rank = row.cells[2].textContent.toLowerCase();
-            
-            const matches = searchTerm === '' || name.includes(searchTerm) || rank.includes(searchTerm);
-            
-            if (matches) {
-                row.style.display = '';
-                hasResults = true;
-                
-                if (searchTerm !== '') {
-                    highlightText(row.cells[1], searchTerm);
-                    highlightText(row.cells[2], searchTerm);
-                } else {
-                    removeHighlight(row.cells[1]);
-                    removeHighlight(row.cells[2]);
+            const response = await fetch(window.location.href, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
                 }
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                personnelData = result.data;
+                renderTable();
+                updateSummary();
             } else {
-                row.style.display = 'none';
+                showToast('Failed to load data', 'error');
+            }
+        } catch (error) {
+            console.error('Error loading data:', error);
+            showToast('Error loading data from database', 'error');
+        }
+    }
+    
+    // Status badge mapping
+    function getStatusBadge(status) {
+        const icons = {
+            'present': '<i class="fas fa-check-circle"></i> Present (Duty)',
+            'leave': '<i class="fas fa-umbrella-beach"></i> On Leave',
+            'sick': '<i class="fas fa-thermometer-half"></i> Sick Report',
+            'work': '<i class="fas fa-briefcase"></i> Work Detail',
+            'workout': '<i class="fas fa-running"></i> Work-Out / PT',
+            'tdy': '<i class="fas fa-plane"></i> TDY/Temporary Duty',
+            'course': '<i class="fas fa-graduation-cap"></i> Course/Training'
+        };
+        
+        const badgeClasses = {
+            'present': 'badge-present',
+            'leave': 'badge-leave',
+            'sick': 'badge-sick',
+            'work': 'badge-work',
+            'workout': 'badge-workout',
+            'tdy': 'badge-tdy',
+            'course': 'badge-course'
+        };
+        
+        return `<span class="badge ${badgeClasses[status]}">${icons[status] || status}</span>`;
+    }
+    
+    // Render table with data
+    function renderTable() {
+        tableBody.innerHTML = '';
+        let filteredData = personnelData;
+        
+        // Apply status filter
+        if (currentFilter !== 'all') {
+            filteredData = personnelData.filter(person => person.status === currentFilter);
+        }
+        
+        // Apply search filter
+        const searchTerm = searchInput.value.toLowerCase().trim();
+        if (searchTerm) {
+            filteredData = filteredData.filter(person => 
+                person.personnel_name.toLowerCase().includes(searchTerm) ||
+                person.rank.toLowerCase().includes(searchTerm) ||
+                getStatusText(person.status).toLowerCase().includes(searchTerm) ||
+                person.remarks.toLowerCase().includes(searchTerm)
+            );
+        }
+        
+        if (filteredData.length === 0) {
+            noResultsDiv.style.display = 'block';
+            table.style.display = 'none';
+            return;
+        }
+        
+        noResultsDiv.style.display = 'none';
+        table.style.display = 'table';
+        
+        filteredData.forEach((person, index) => {
+            const row = tableBody.insertRow();
+            const inTimeDisplay = person.in_time ? person.in_time : '-';
+            const outTimeDisplay = person.out_time ? person.out_time : '-';
+            
+            row.setAttribute('data-status', person.status);
+            row.setAttribute('data-id', person.id);
+            row.innerHTML = `
+                <td>${index + 1}</td>
+                <td>${person.personnel_name}</td>
+                <td>${person.rank}</td>
+                <td>${getStatusBadge(person.status)}</td>
+                <td>${person.record_date}</td>
+                <td>${inTimeDisplay}</td>
+                <td>${outTimeDisplay}</td>
+                <td>${person.remarks}</td>
+                <td>
+                    <button class="btn-icon edit-btn" onclick='editPersonnel(${JSON.stringify(person)})'><i class="fas fa-edit"></i></button>
+                    <button class="btn-icon delete-btn" onclick="deletePersonnel(${person.id})"><i class="fas fa-trash"></i></button>
+                </td>
+            `;
+            
+            // Apply highlight if search term exists
+            if (searchTerm) {
+                highlightText(row.cells[1], searchTerm);
+                highlightText(row.cells[2], searchTerm);
+                highlightText(row.cells[7], searchTerm);
             }
         });
-        
-        noResultsDiv.style.display = (!hasResults && searchTerm !== '') ? 'block' : 'none';
-        table.style.display = (!hasResults && searchTerm !== '') ? 'none' : 'table';
-        clearSearchBtn.style.display = searchTerm !== '' ? 'block' : 'none';
+    }
+    
+    function getStatusText(status) {
+        const statusMap = {
+            'present': 'Present (Duty)',
+            'leave': 'On Leave',
+            'sick': 'Sick Report',
+            'work': 'Work Detail',
+            'workout': 'Work-Out / PT',
+            'tdy': 'TDY/Temporary Duty',
+            'course': 'Course/Training'
+        };
+        return statusMap[status] || status;
     }
     
     function highlightText(cell, searchTerm) {
@@ -696,8 +879,86 @@ ob_start();
         }
     }
     
-    function removeHighlight(cell) {
-        cell.innerHTML = cell.textContent;
+    // Toggle time fields based on status
+    function toggleTimeFields() {
+        const status = document.getElementById('status').value;
+        const inTimeField = document.getElementById('inTimeField');
+        const outTimeField = document.getElementById('outTimeField');
+        
+        if (status === 'present' || status === 'work') {
+            inTimeField.style.display = 'block';
+            outTimeField.style.display = 'none';
+            document.getElementById('outTime').value = '';
+        } else if (status === 'workout') {
+            inTimeField.style.display = 'block';
+            outTimeField.style.display = 'block';
+        } else {
+            inTimeField.style.display = 'none';
+            outTimeField.style.display = 'none';
+            document.getElementById('inTime').value = '';
+            document.getElementById('outTime').value = '';
+        }
+    }
+    
+    // Show toast notification
+    function showToast(message, type = 'success') {
+        const toast = document.getElementById('toast');
+        const toastMessage = document.getElementById('toastMessage');
+        toastMessage.textContent = message;
+        toast.style.backgroundColor = type === 'success' ? '#1e3a32' : '#dc2626';
+        toast.style.display = 'block';
+        
+        setTimeout(() => {
+            toast.style.display = 'none';
+        }, 3000);
+    }
+    
+    // Update summary statistics
+    function updateSummary() {
+        let total = personnelData.length;
+        let presentCount = 0, leaveCount = 0, sickCount = 0, workCount = 0, workoutCount = 0, tdyCount = 0, courseCount = 0;
+        
+        personnelData.forEach(person => {
+            switch(person.status) {
+                case 'present': presentCount++; break;
+                case 'leave': leaveCount++; break;
+                case 'sick': sickCount++; break;
+                case 'work': workCount++; break;
+                case 'workout': workoutCount++; break;
+                case 'tdy': tdyCount++; break;
+                case 'course': courseCount++; break;
+            }
+        });
+        
+        document.getElementById('totalPersonnel').textContent = total;
+        document.getElementById('presentCount').textContent = presentCount;
+        document.getElementById('leaveCount').textContent = leaveCount;
+        document.getElementById('sickCount').textContent = sickCount;
+        document.getElementById('workCount').textContent = workCount;
+        document.getElementById('workoutCount').textContent = workoutCount;
+        document.getElementById('tdyCount').textContent = tdyCount;
+        document.getElementById('courseCount').textContent = courseCount;
+    }
+    
+    // Filter by status
+    function filterByStatus(status) {
+        currentFilter = status;
+        renderTable();
+        
+        // Update active button style
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            if (btn.getAttribute('data-filter') === status) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+    }
+    
+    // Search functionality
+    function searchTable() {
+        renderTable();
+        clearSearchBtn.style.display = searchInput.value.trim() !== '' ? 'block' : 'none';
     }
     
     function clearSearch() {
@@ -706,28 +967,16 @@ ob_start();
         searchInput.focus();
     }
     
-    // Auto-populate rank when personnel is selected
-    document.getElementById('personnelName').addEventListener('change', function() {
-        const selectedName = this.value;
-        if (selectedName && personnelData[selectedName]) {
-            document.getElementById('rank').value = personnelData[selectedName].rank;
-        } else {
-            document.getElementById('rank').value = '';
-        }
-    });
-    
-    // Calculate percentage on input change
-    document.getElementById('presentDays').addEventListener('input', calculatePercentage);
-    document.getElementById('absentDays').addEventListener('input', calculatePercentage);
-    
     // Open modal for adding
     markBtn.onclick = function() {
         isEditing = false;
-        editingRow = null;
-        modalTitle.innerHTML = '<i class="fas fa-calendar-check"></i> Mark Attendance';
+        editingId = null;
+        modalTitle.innerHTML = '<i class="fas fa-user-plus"></i> Add Personnel';
         form.reset();
-        document.getElementById('attendancePercent').value = '';
-        document.getElementById('rank').value = '';
+        document.getElementById('recordId').value = '';
+        document.getElementById('recordDate').value = today;
+        document.getElementById('inTimeField').style.display = 'none';
+        document.getElementById('outTimeField').style.display = 'none';
         modal.style.display = 'block';
     }
     
@@ -735,7 +984,7 @@ ob_start();
         modal.style.display = 'none';
         form.reset();
         isEditing = false;
-        editingRow = null;
+        editingId = null;
     }
     
     closeBtn.onclick = closeModal;
@@ -747,106 +996,150 @@ ob_start();
         }
     }
     
-    function editAttendance(button) {
-        const row = button.closest('tr');
-        const cells = row.cells;
-        
+    function editPersonnel(person) {
         isEditing = true;
-        editingRow = row;
-        modalTitle.innerHTML = '<i class="fas fa-edit"></i> Edit Attendance';
+        editingId = person.id;
+        modalTitle.innerHTML = '<i class="fas fa-edit"></i> Edit Personnel';
         
-        document.getElementById('personnelName').value = cells[1].textContent;
-        document.getElementById('rank').value = cells[2].textContent;
-        document.getElementById('presentDays').value = cells[3].textContent;
-        document.getElementById('absentDays').value = cells[4].textContent;
-        calculatePercentage();
+        document.getElementById('recordId').value = person.id;
+        document.getElementById('personnelName').value = person.personnel_name;
+        document.getElementById('rank').value = person.rank;
+        document.getElementById('recordDate').value = person.record_date;
+        document.getElementById('status').value = person.status;
+        document.getElementById('inTime').value = person.in_time || '';
+        document.getElementById('outTime').value = person.out_time || '';
+        document.getElementById('remarks').value = person.remarks;
         
+        toggleTimeFields();
         modal.style.display = 'block';
+    }
+    
+    async function deletePersonnel(id) {
+        if (confirm('Are you sure you want to delete this record?')) {
+            try {
+                const formData = new FormData();
+                formData.append('action', 'delete');
+                formData.append('id', id);
+                
+                const response = await fetch(window.location.href, {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showToast('Record deleted successfully', 'success');
+                    await loadDataFromDatabase();
+                } else {
+                    showToast('Failed to delete record', 'error');
+                }
+            } catch (error) {
+                console.error('Error deleting:', error);
+                showToast('Error deleting record', 'error');
+            }
+        }
     }
     
     // Export to CSV
     document.getElementById('exportBtn').addEventListener('click', function() {
         const rows = [];
-        const headers = ['S.No.', 'Name', 'Rank', 'Present Days', 'Absent', 'Attendance %', 'Status'];
+        const headers = ['S.No.', 'Name', 'Rank', 'Status', 'Date', 'IN Time', 'OUT Time', 'Remarks'];
         rows.push(headers);
         
-        tableBody.querySelectorAll('tr').forEach(row => {
-            if (row.style.display !== 'none') {
-                const rowData = [
-                    row.cells[0].textContent,
-                    row.cells[1].textContent,
-                    row.cells[2].textContent,
-                    row.cells[3].textContent,
-                    row.cells[4].textContent,
-                    row.cells[5].textContent,
-                    row.cells[6].textContent.trim()
-                ];
-                rows.push(rowData);
-            }
+        personnelData.forEach((person, index) => {
+            const statusText = getStatusText(person.status);
+            const inTimeDisplay = person.in_time || '-';
+            const outTimeDisplay = person.out_time || '-';
+            
+            rows.push([
+                index + 1,
+                person.personnel_name,
+                person.rank,
+                statusText,
+                person.record_date,
+                inTimeDisplay,
+                outTimeDisplay,
+                person.remarks
+            ]);
         });
         
-        const csvContent = rows.map(row => row.join(',')).join('\n');
-        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const csvContent = rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+        const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `attendance_${new Date().toISOString().split('T')[0]}.csv`;
+        a.download = `military_status_${new Date().toISOString().split('T')[0]}.csv`;
         a.click();
         URL.revokeObjectURL(url);
-        showToast('Attendance data exported successfully', 'success');
+        showToast('Personnel data exported successfully', 'success');
     });
     
     // Handle form submission
-    form.onsubmit = function(e) {
+    form.onsubmit = async function(e) {
         e.preventDefault();
         
+        const id = document.getElementById('recordId').value;
         const name = document.getElementById('personnelName').value;
         const rank = document.getElementById('rank').value;
-        const presentDays = document.getElementById('presentDays').value;
-        const absentDays = document.getElementById('absentDays').value;
-        const percent = document.getElementById('attendancePercent').value;
+        const date = document.getElementById('recordDate').value;
+        const status = document.getElementById('status').value;
+        const inTime = document.getElementById('inTime').value || '';
+        const outTime = document.getElementById('outTime').value || '';
+        const remarks = document.getElementById('remarks').value;
         
-        if (!name || !rank || !presentDays || !absentDays) {
+        if (!name || !rank || !date || !status || !remarks) {
             showToast('Please fill all required fields', 'error');
             return;
         }
         
-        const statusBadge = getStatusBadge(percent);
-        
-        if (isEditing && editingRow) {
-            editingRow.cells[1].textContent = name;
-            editingRow.cells[2].textContent = rank;
-            editingRow.cells[3].textContent = presentDays;
-            editingRow.cells[4].textContent = absentDays;
-            editingRow.cells[5].textContent = percent;
-            editingRow.cells[6].innerHTML = statusBadge;
-            showToast(`Attendance for ${name} updated successfully`, 'success');
-        } else {
-            const newRow = tableBody.insertRow();
-            const newIndex = tableBody.rows.length;
-            newRow.innerHTML = `
-                <td>${newIndex}</td>
-                <td>${name}</td>
-                <td>${rank}</td>
-                <td>${presentDays}</td>
-                <td>${absentDays}</td>
-                <td>${percent}</td>
-                <td>${statusBadge}</td>
-                <td>
-                    <button class="btn-icon edit-btn" onclick="editAttendance(this)"><i class="fas fa-edit"></i></button>
-                 </td>
-            `;
-            showToast(`Attendance for ${name} marked successfully`, 'success');
+        try {
+            const formData = new FormData();
+            formData.append('action', isEditing ? 'update' : 'add');
+            formData.append('name', name);
+            formData.append('rank', rank);
+            formData.append('status', status);
+            formData.append('date', date);
+            formData.append('inTime', inTime);
+            formData.append('outTime', outTime);
+            formData.append('remarks', remarks);
+            if (isEditing) {
+                formData.append('id', id);
+            }
+            
+            const response = await fetch(window.location.href, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                showToast(isEditing ? 'Record updated successfully' : 'Record added successfully', 'success');
+                closeModal();
+                await loadDataFromDatabase();
+            } else {
+                showToast('Failed to save record', 'error');
+            }
+        } catch (error) {
+            console.error('Error saving:', error);
+            showToast('Error saving record', 'error');
         }
-        
-        updateSerialNumbers();
-        updateSummary();
-        closeModal();
-        searchTable();
     }
     
-    // Initialize summary on page load
-    updateSummary();
+    // Initialize
+    loadDataFromDatabase();
+    
+    // Filter button event listeners
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            filterByStatus(this.getAttribute('data-filter'));
+        });
+    });
     
     // Event listeners for search
     searchInput.addEventListener('input', searchTable);

@@ -12,7 +12,7 @@
         </li>
         <li>
             <a href="attendance.php" class="sidebar-link" data-page="attendance">
-                <i class="fas fa-calendar-check"></i><span>Attendance</span>
+                <i class="fas fa-clock"></i><span>InOut</span>
             </a>
         </li>
         <li>
